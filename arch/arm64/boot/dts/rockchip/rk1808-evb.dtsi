@@ -210,7 +210,7 @@
 		rockchip,grf = <&grf>;
 		pinctrl-names = "default";
 		pinctrl-0 = <&wifi_wake_host>;
-		wifi_chip_type = "ap6212";
+		wifi_chip_type = "ap6356s";
 		WIFI,host_wake_irq = <&gpio4 RK_PC1 GPIO_ACTIVE_HIGH>;
 		status = "okay";
 	};
@@ -254,7 +254,7 @@
 	phy-supply = <&vcc_phy>;
 	phy-mode = "rgmii";
 	clock_in_out = "input";
-	snps,reset-gpio = <&gpio0 10 GPIO_ACTIVE_LOW>;
+	snps,reset-gpio = <&gpio2 RK_PA0 GPIO_ACTIVE_LOW>;
 	snps,reset-active-low;
 	/* Reset time is 20ms, 100ms for rtl8211f */
 	snps,reset-delays-us = <0 20000 100000>;
@@ -568,6 +568,7 @@
 &i2c4 {
 	status = "okay";
 
+	/*
 	sensor@d {
 		status = "okay";
 		compatible = "ak8963";
@@ -578,6 +579,7 @@
 		layout = <1>;
 		reprobe_en = <1>;
 	};
+	*/
 
 	sensor@4c {
 		status = "okay";

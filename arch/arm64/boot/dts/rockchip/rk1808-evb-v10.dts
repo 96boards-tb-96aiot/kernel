@@ -490,6 +490,17 @@
 			linux,default-trigger = "default-on";
 		};
 	};
+	
+	pi5usb31213a: typec-connector@d {
+		status = "okay";
+		compatible = "pericom,30216c";
+		reg = <0x0d>;
+		pinctrl-names = "default";
+                pinctrl-0 = <&pi5usb31213a_irq_gpio>;
+		enable-gpios = <&gpio2 RK_PC7 GPIO_ACTIVE_HIGH>; 
+		int-n-gpios = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
+		vbus-5v-gpios = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>;
+	};
 };
 
 &i2s1 {
@@ -595,4 +606,20 @@
 
 &vpu_service {
 	status = "okay";
+};
+&pinctrl {
+	pcfg_output_high: pcfg-output-high {
+                        output-high;
+                };
+
+        pcfg_output_low: pcfg-output-low {
+                        output-low;
+                };
+        typec-connector {
+                pi5usb31213a_irq_gpio: pi5usb31213a-irq-gpio {
+                        rockchip,pins = <2 22 RK_FUNC_GPIO &pcfg_pull_none>;
+                };
+        };
+
+
 };
