@@ -157,7 +157,22 @@
 	};
 };
 
-&i2c4 {
+&i2c4 { 
+	status = "okay";
+	clock-frequency = <100000>;
+	
+        pi5usb31213a: typec-connector@d {
+                status = "okay";
+                compatible = "pericom,31213a";
+                reg = <0x0d>;
+                pinctrl-names = "default";
+                pinctrl-0 = <&pi5usb31213a_irq_gpio>;
+                enable-gpios = <&gpio2 RK_PC7 GPIO_ACTIVE_HIGH>;
+                int-n-gpios = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
+                //vbus-5v-gpios = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>; // complict with otg_vbus_drive in usb controller
+        };
+	
+
 	is31fl3236: led-controller@3c {
 		compatible = "issi,is31fl3236";
 		reg = <0x3c>;
@@ -491,16 +506,6 @@
 		};
 	};
 	
-	pi5usb31213a: typec-connector@d {
-		status = "okay";
-		compatible = "pericom,30216c";
-		reg = <0x0d>;
-		pinctrl-names = "default";
-                pinctrl-0 = <&pi5usb31213a_irq_gpio>;
-		enable-gpios = <&gpio2 RK_PC7 GPIO_ACTIVE_HIGH>; 
-		int-n-gpios = <&gpio2 RK_PC6 GPIO_ACTIVE_LOW>;
-		vbus-5v-gpios = <&gpio0 RK_PB7 GPIO_ACTIVE_HIGH>;
-	};
 };
 
 &i2s1 {

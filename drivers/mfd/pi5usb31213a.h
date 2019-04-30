@@ -1,5 +1,5 @@
 /*
- * Pericom 30216C  driver IC for type C
+ * Pericom 31213A  driver IC for type C
  *
  *
  * This program is free software; you can redistribute it and/or modify
@@ -13,8 +13,8 @@
  * GNU General Public License for more details.
  */
 
-#ifndef _PERICOM_30216C_H_
-#define _PERICOM_30216C_H_
+#ifndef _PERICOM_31213A_H_
+#define _PERICOM_31213A_H_
 
 /*  pericom id
   *  0: Device mode

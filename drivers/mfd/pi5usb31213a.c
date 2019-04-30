@@ -1,5 +1,5 @@
 /*
- * PERICOM 30216C driver 
+ * PERICOM 31213A driver 
  *
  * This program is free software; you can redistribute it and/or modify
  * it under the terms of the GNU General Public License as published by
@@ -17,71 +17,90 @@
 #include <linux/i2c.h>
 #include <linux/interrupt.h>
 #include <linux/delay.h>
+#include <linux/of_gpio.h>
+#include <linux/extcon.h>
 #include <linux/regulator/consumer.h>
 
 #include "pi5usb31213a.h"
-//#include "typec_class.h"
 
-#define DRIVER_NAME "pericom_30216c"
+#define DRIVER_NAME "pericom_31213a"
 
 /*
-   pericom data struct
+   pericom chip struct
   */
-struct pericom_30216c_data{
+struct pericom_31213a_chip {
 	struct i2c_client *i2c_client;
-	int irq;
+	struct device *dev;
 	struct mutex i2c_rw_mutex;
+    struct regmap *regmap;
+    struct work_struct work;
+    struct workqueue_struct *pericom_31213a_wq;
+    struct extcon_dev *extcon;
+    struct gpio_desc *gpio_vbus_5v;
+    struct gpio_desc *enable_gpio;
+    struct gpio_desc *gpio_int;
+    spinlock_t irq_lock;
+    int gpio_int_irq;
+    int enable_irq;
+	u8 cc_state;
+    int cc1;
+    int cc2;
+	int irq;	
+};
 
-	//struct typec_dev c_dev;
+static const unsigned int pericom_31213a_cable[] = {
+	EXTCON_USB,
+	EXTCON_USB_HOST,
+	EXTCON_NONE,
 };
 
  /**
- * pericom_30216c_i2c_read()
+ * pericom_31213a_i2c_read()
  *
  * Called by various functions in this driver,
  * This function reads data of an arbitrary length from the sensor,
  * starting from an assigned register address of the sensor, via I2C
  * with a retry mechanism.
  */
-static int pericom_30216c_i2c_read(struct pericom_30216c_data *pericom_data,
+static int pericom_31213a_i2c_read(struct pericom_31213a_chip *p31213a_chip,
 		unsigned char *data, unsigned short length)
 {
 	int retval;
 	unsigned char retry;
 	struct i2c_msg msg[] = {
 		{
-			.addr = pericom_data->i2c_client->addr,
+			.addr = p31213a_chip->i2c_client->addr,
 			.flags = I2C_M_RD,
 			.len = length,
 			.buf = data,
 		},
 	};
 
-	mutex_lock(&(pericom_data->i2c_rw_mutex));
+	mutex_lock(&(p31213a_chip->i2c_rw_mutex));
 
 	for (retry = 0; retry < PERICOM_I2C_RETRY_TIMES; retry++) {
-		if (i2c_transfer(pericom_data->i2c_client->adapter, msg, 1) > 0) {
+		if (i2c_transfer(p31213a_chip->i2c_client->adapter, msg, 1) > 0) {
 			retval = length;
 			break;
 		}
-		dev_err(&pericom_data->i2c_client->dev,
+		dev_err(&p31213a_chip->i2c_client->dev,
 				"%s: I2C retry %d\n",__func__, retry + 1);
 		msleep(20);
 	}
 
 	if (retry == PERICOM_I2C_RETRY_TIMES) {
-		dev_err(&pericom_data->i2c_client->dev,
+		dev_err(&p31213a_chip->i2c_client->dev,
 				"%s: I2C read over retry limit\n",	__func__);
 		retval = -EIO;
 	}
 
-	mutex_unlock(&(pericom_data->i2c_rw_mutex));
+	mutex_unlock(&(p31213a_chip->i2c_rw_mutex));
 
 	return retval;
 }
 
  /**
- * pericom_30216c_i2c_write()
+ * pericom_31213a_i2c_write()
  *
  * Called by various functions in this driver
  *
@@ -89,316 +108,298 @@ static int pericom_30216c_i2c_read(struct pericom_30216c_data *pericom_data,
  * starting from an assigned register address of the sensor, via I2C with
  * a retry mechanism.
  */
-static int pericom_30216c_i2c_write(struct pericom_30216c_data *pericom_data,
+static int pericom_31213a_i2c_write(struct pericom_31213a_chip *p31213a_chip,
 		unsigned char *data, unsigned short length)
 {
 	int retval;
 	unsigned char retry;
 	struct i2c_msg msg[] = {
 		{
-			.addr = pericom_data->i2c_client->addr,
+			.addr = p31213a_chip->i2c_client->addr,
 			.flags = 0,
 			.len = length ,
 			.buf = data,
 		}
 	};
 
-	mutex_lock(&(pericom_data->i2c_rw_mutex));
+	mutex_lock(&(p31213a_chip->i2c_rw_mutex));
 
 	for (retry = 0; retry < PERICOM_I2C_RETRY_TIMES; retry++) {
-		if (i2c_transfer(pericom_data->i2c_client->adapter, msg, 1) == 1) {
+		if (i2c_transfer(p31213a_chip->i2c_client->adapter, msg, 1) == 1) {
 			retval = length;
 			break;
 		}
-		dev_err(&pericom_data->i2c_client->dev,
+		dev_err(&p31213a_chip->i2c_client->dev,
 				"%s: I2C retry %d\n",
 				__func__, retry + 1);
 		msleep(20);
 	}
 
 	if (retry == PERICOM_I2C_RETRY_TIMES) {
-		dev_err(&pericom_data->i2c_client->dev,
+		dev_err(&p31213a_chip->i2c_client->dev,
 				"%s: I2C write over retry limit\n",
 				__func__);
 		retval = -EIO;
 	}
 
-	mutex_unlock(&(pericom_data->i2c_rw_mutex));
+	mutex_unlock(&(p31213a_chip->i2c_rw_mutex));
 
 	return retval;
 }
 
 /*set mode*/
-static int pericom_30216c_set_power_mode(struct pericom_30216c_data *pericom_data,enum pericom_power_mode mode)
+static int pericom_31213a_set_power_mode(struct pericom_31213a_chip *p31213a_chip,enum pericom_power_mode mode)
 {
 	int ret;
 	char buf[2] = {0x20,0};
 
 	//read reg1 value
-	pericom_30216c_i2c_read(pericom_data,buf,2);
+	pericom_31213a_i2c_read(p31213a_chip,buf,2);
 	//construct reg1 value
 	buf[1] =(buf[1] & ~PERICOM_POWER_SAVING_MASK)| ((mode << PERICOM_POWER_SAVING_OFFSET )& PERICOM_POWER_SAVING_MASK);
 	buf[1] &= ~PERICOM_INTERRUPT_MASK;
 
 	//write reg1 value
-	ret = pericom_30216c_i2c_write(pericom_data, buf, 2);
+	ret = pericom_31213a_i2c_write(p31213a_chip, buf, 2);
 	return ret;
 }
 
- int pericom_30216c_set_role_mode(struct pericom_30216c_data *pericom_data,enum pericom_role_mode mode)
+void pericom_31213a_irq_disable(struct pericom_31213a_chip *p31213a_chip)
 {
-	int ret,i;
-	char buf[4] = {0,0,0,0};
+	unsigned long irqflags = 0;
 
-	//read reg1 value
-	pericom_30216c_i2c_read(pericom_data,buf,2);
-	//construct reg1 value
-	if(mode==0x00) {
-		buf[1] = (buf[1] & ~PERICOM_ROLE_MODE_MASK) 
-			|((mode << PERICOM_ROLE_OFFSET )& PERICOM_ROLE_MODE_MASK);      //device mode 0x00
-
-		}
-	else if(mode==0x01){
-		buf[1] = (buf[1] & ~PERICOM_ROLE_MODE_MASK) 
-			|((mode << PERICOM_ROLE_OFFSET )& PERICOM_ROLE_MODE_MASK);		//Host mode 0x02,0x0a,0x12
+	spin_lock_irqsave(&p31213a_chip->irq_lock, irqflags);
+	if (p31213a_chip->enable_irq) {
+		disable_irq_nosync(p31213a_chip->gpio_int_irq);
+		p31213a_chip->enable_irq = 0;
+	} else {
+		dev_warn(p31213a_chip->dev, "irq have already disabled\n");
 	}
-	else //default typec mode is trysnk mode
-		buf[1] = (buf[1] & ~PERICOM_ROLE_MODE_MASK) 
-			|(PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK);   //TrySNK DRP mode 0x46,0x4e,0x56
-		
-	//buf[1] = (buf[1] & ~PERICOM_ROLE_MODE_MASK) 
-	//		|((mode << PERICOM_ROLE_OFFSET )& PERICOM_ROLE_MODE_MASK);
+	spin_unlock_irqrestore(&p31213a_chip->irq_lock, irqflags);
+}
 
-	/* mask interrupt */
-	buf[1] |= PERICOM_INTERRUPT_MASK;
-	//write reg1 value
-	ret = pericom_30216c_i2c_write(pericom_data, buf, 2);
+void pericom_31213a_irq_enable(struct pericom_31213a_chip *p31213a_chip)
+{
+	unsigned long irqflags = 0;
 
-	/* sleep and wait for correct status */
-	for (i = 0; i <= 5; i++) {
-		msleep(1500);
-		pericom_30216c_i2c_read(pericom_data, buf, 4);
-		dev_info(&pericom_data->i2c_client->dev,
-				"read:%d,%d,%d,%d\n",buf[0],buf[1],buf[2],buf[3]);
-		/* mode=0 : device, reg4 must be 0x08
-		  * mode=1: host , reg4 must be 0x04
-		  * mode=2: drp,  all value is ok
-		  */
-		if (((mode == DEVICE_MODE) && (buf[3] & 0x08))
-			|| ((mode == HOST_MODE) && (buf[3] & 0x04))
-			|| (mode == TRYSNK_DRP_MODE))
-			break;
+	spin_lock_irqsave(&p31213a_chip->irq_lock, irqflags);
+	if (!p31213a_chip->enable_irq) {
+		enable_irq(p31213a_chip->gpio_int_irq);
+		p31213a_chip->enable_irq = 1;
 	}
-
-	if ( i > 5 ) dev_info(&pericom_data->i2c_client->dev, "try to %d mode fail \n", mode);
-	/* unmask interrupt*/
-	buf[1] &= ~PERICOM_INTERRUPT_MASK;
-	//write reg1 value
-	ret = pericom_30216c_i2c_write(pericom_data, buf, 2);
-
-	return ret;
-}
-/*set device mode*/
- int pericom_30216c_set_device_mode(struct pericom_30216c_data *pericom_data)
-{
-	return pericom_30216c_set_role_mode(pericom_data,DEVICE_MODE);
-}
-
-/* set host mode
-  * success if return positive value ,or return negative
-  */
- int pericom_30216c_set_host_mode(struct pericom_30216c_data *pericom_data)
-{
-	return pericom_30216c_set_role_mode(pericom_data,HOST_MODE);
-}
-
-/* set DRP mode
-  * success if return positive value ,or return negative
-  */
-//static int pericom_30216c_set_drp_mode(struct pericom_30216c_data *pericom_data)
-//{
-//	return pericom_30216c_set_role_mode(pericom_data,DRP_MODE);
-//}
-
-static int pericom_30216c_set_trysnk_drp_mode(struct pericom_30216c_data *pericom_data)
-{
-	return pericom_30216c_set_role_mode(pericom_data,TRYSNK_DRP_MODE);
-}
-
-//static int pericom_30216c_set_trysrc_drp_mode(struct pericom_30216c_data *pericom_data)
-//{
-//	return pericom_30216c_set_role_mode(pericom_data,TRYSRC_DRP_MODE);
-//}
-
-/* get role mode
-  * success if return positive value ,or return negative
-  */
- int pericom_30216c_get_role_mode(struct pericom_30216c_data *pericom_data)
-{
-	int ret;
-	char buf[2] = {0,0};
-
-	//read reg1 value
-	ret = pericom_30216c_i2c_read(pericom_data,buf,2);
-	//construct reg1 value
-	buf[1] = (buf[1] & PERICOM_ROLE_MODE_MASK) >> PERICOM_ROLE_OFFSET;	
-	return ret > 0 ? buf[1]:ret;
+	spin_unlock_irqrestore(&p31213a_chip->irq_lock, irqflags);
 }
 
 /* set power saving mode
   * success if return positive value ,or return negative
   */
-static int pericom_30216c_set_powersaving_mode(struct pericom_30216c_data *pericom_data)
+static int pericom_31213a_set_powersaving_mode(struct pericom_31213a_chip *p31213a_chip)
 {
-	return pericom_30216c_set_power_mode(pericom_data,POWERSAVING_MODE);
+	return pericom_31213a_set_power_mode(p31213a_chip,POWERSAVING_MODE);
 }
 
-/* set active mode
-  * success if return positive value ,or return negative
-  */
-static int pericom_30216c_set_poweractive_mode(struct pericom_30216c_data *pericom_data)
+static int pericom_31213a_attached_state_detect(struct pericom_31213a_chip *p31213a_chip)
 {
-	return pericom_30216c_set_power_mode(pericom_data,ACTIVE_MODE);
-}
-
-/*
-static int pericom_30216c_get_id_status(struct typec_dev *dev)
-{
-	struct pericom_30216c_data *pericom_data =
-		  container_of(dev,struct pericom_30216c_data,c_dev);
-
-	return pericom_30216c_get_role_mode(pericom_data);
-}
-
-static int pericom_30216c_set_id_status(struct typec_dev *dev,int value)
-{
-	int rc = -1;
-	struct pericom_30216c_data *pericom_data =
-		  container_of(dev,struct pericom_30216c_data,c_dev);
-
-	if (value == DEVICE_MODE)
-		rc = pericom_30216c_set_device_mode(pericom_data);
-	else if (value == HOST_MODE)
-		rc = pericom_30216c_set_host_mode(pericom_data);
-	//else if (value == DRP_MODE)
-	//	rc = pericom_30216c_set_drp_mode(pericom_data);
-    else// (value == TRYSNK_DRP_MODE)
-		rc = pericom_30216c_set_trysnk_drp_mode(pericom_data);        //trysnk mode 
-	//else if (value == TRYSRC_DRP_MODE)
-	//	rc = pericom_30216c_set_trysrc_drp_mode(pericom_data);		  //trysrc mode
-	return rc;
-}
-*/
-
-/* get cc  orientation
-  * success if return positive value ,or return 0
-  * return 1 means cc1
-  * return 2 means cc2.
-  */
- int pericom_30216c_get_cc_orientation(struct pericom_30216c_data *pericom_data)
-{
+	unsigned int attached_state = 0x0;
 	int ret;
-	char buf[4] = {0,0,0,0};
-
-	//read reg4 value
-	ret = pericom_30216c_i2c_read(pericom_data,buf,4);
-	//construct reg1 value
-	buf[3] = buf[3] & PERICOM_CC_ORI_MASK;
-
-	return ret > 0 ? buf[3]:0;
-}
-/*
-static int pericom_30216c_get_cc_pin(struct typec_dev *dev)
-{
-	struct pericom_30216c_data *pericom_data =
-		  container_of(dev,struct pericom_30216c_data,c_dev);
-
-	return pericom_30216c_get_cc_orientation(pericom_data);
-}
-*/
-static bool ic_is_present(struct pericom_30216c_data *pericom_data)
-{
-	int ret;
-	char buf ;
+	char reg[4] = {0,0,0,0};
+	char port_status = 0x0;
 	
-	printk("==========================================xxxx\n");
+	ret = pericom_31213a_i2c_read(p31213a_chip,reg,4);
+	if(ret < 0)
+	{
+	   dev_err(&p31213a_chip->i2c_client->dev,"%s: I2C read error ret = %d\n",__func__, ret);
+	}
+	
+	port_status = (reg[3]>>2)&0x07;
+	switch(port_status)
+	{
+		case 1:
+			dev_info(&p31213a_chip->i2c_client->dev, "Device plug in.\n");
+			attached_state = EXTCON_USB_HOST;
+			// switch on vbus power
+			break;
+		case 2:
+			dev_info(&p31213a_chip->i2c_client->dev, "Host plug in.\n");
+			attached_state = EXTCON_USB;
+			break;
+		default:
+			attached_state = EXTCON_NONE;
+			break;
+	}
+	
+	return attached_state;
+}
+/*
+static void pericom_31213a_set_extern_state(struct pericom_31213a_chip *p31213a_chip)
+{
+	unsigned int attached_state = pericom_31213a_attached_state_detect(p31213a_chip);
+	if(attached_state == EXTCON_USB_HOST){
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB, false);
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB_HOST, true);
+	}else if(attached_state == EXTCON_USB){
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB, true);
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB_HOST, false);
+	}else{
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB, true);
+		extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB_HOST, false);
+	}
+}
+*/
+
+static bool ic_is_present(struct pericom_31213a_chip *p31213a_chip)
+{
+	int ret;
+	char reg ;
 
 	//read reg0 value
-	ret = pericom_30216c_i2c_read(pericom_data,&buf,1);
+	ret = pericom_31213a_i2c_read(p31213a_chip,&reg,1);
 	
-	printk("==========================================ret %02x \n", ret);
+	printk("Pericom 31213A Type C Connector ChipID: %02x \n", reg);
 
-	return (ret == 0x20)? false:true;    //30216C ChipID is 0x20
+	return (reg == 0x08)? true:false;    //31213A ChipID is 0x08
 }
 
-static irqreturn_t pericom_30216c_irq_handler(int irq, void *dev_id)
+static int pericom_31213a_initgpio(struct pericom_31213a_chip *p31213a_chip)
 {
-	struct pericom_30216c_data *pericom_data = (struct pericom_30216c_data *) dev_id;
-	char reg[4] = {0,0,0,0};
-	char curr_mode;
-	static bool  plug_flag = false;
+  	 // init gpio
+	p31213a_chip->gpio_int = devm_gpiod_get_optional(p31213a_chip->dev, "int-n", GPIOD_IN);
+	if (IS_ERR(p31213a_chip->gpio_int))
+	{
+	   dev_warn(p31213a_chip->dev, "Could not get named GPIO for INT!\n");
+	   return PTR_ERR(p31213a_chip->gpio_int);
+	}
+	
+	p31213a_chip->enable_gpio = devm_gpiod_get_optional(p31213a_chip->dev, "enable", GPIOD_OUT_LOW);
+	if (IS_ERR(p31213a_chip->enable_gpio))
+	   dev_warn(p31213a_chip->dev, "Could not get named GPIO for ENABLE chip!\n");
+	else
+	   gpiod_set_value(p31213a_chip->enable_gpio, 1);
+	
+	// below gpio complict with otg_vbus_drive in usb otg controller driver
+	/*
+	p31213a_chip->gpio_vbus_5v = devm_gpiod_get_optional(p31213a_chip->dev, "vbus-5v", GPIOD_OUT_LOW);
+	printk("p31213a_chip->gpio_vbus_5v =0x%p\n",p31213a_chip->gpio_vbus_5v);
+	if (IS_ERR(p31213a_chip->gpio_vbus_5v))
+		dev_warn(p31213a_chip->dev, "Could not get named GPIO for VBus5V!\n");
+	else
+		gpiod_set_value(p31213a_chip->gpio_vbus_5v, 0);
+	*/
+	
+	return 0;	
+}
 
-	//dev_info(&pericom_data->i2c_client->dev, "enter pericom interrupt,curr_mode:%d\n",curr_mode);
+static int pericom_31213a_initialize(struct pericom_31213a_chip *p31213a_chip)
+{	
+	int ret;
+	char reg[4] = {0,0,0,0};
+	
+	// init register
+	ret = pericom_31213a_i2c_read(p31213a_chip,reg,4);
+	if(ret < 0)
+	{
+	   dev_err(&p31213a_chip->i2c_client->dev,"%s: I2C read error ret = %d\n",__func__, ret);
+	}
+	
+	//reg[1] = (reg[1]&~PERICOM_INTERRUPT_MASK) |PERICOM_DRP_MODE;
+	reg[1] = 0x66;
+	//write reg1 value
+	ret = pericom_31213a_i2c_write(p31213a_chip, reg, 2);
+	if(ret < 0)
+	{
+	   dev_err(&p31213a_chip->i2c_client->dev,"%s: I2C write error ret = %d\n",__func__, ret);
+	}
+	return ret;
+	
+}
+
+static irqreturn_t pericom_31213a_irq_handler(int irq, void *dev_id)
+{
+	struct pericom_31213a_chip *p31213a_chip = (struct pericom_31213a_chip *) dev_id;
+	char reg[4] = {0,0,0,0};
+	char curr_mode = 0x0;
+	char int_status = 0x0;
+	char cc_status = 0x0;
+	char port_status = 0x0;
+	char control_status = 0x0;
+
 	// 0.Mask interrupt
-	pericom_30216c_i2c_read(pericom_data,  reg, 2);
-	dev_info(&pericom_data->i2c_client->dev, "0.reg=%x,%x,%x,%x\n",reg[0],reg[1],reg[2],reg[3]);
+	pericom_31213a_i2c_read(p31213a_chip,  reg, 2);
+	dev_info(&p31213a_chip->i2c_client->dev, "interrupt .reg=%x,%x,%x,%x\n",reg[0],reg[1],reg[2],reg[3]);
 	curr_mode = reg[1] & (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK);   //support trysnk mode
 	reg[1] = reg[1] | PERICOM_INTERRUPT_MASK;
-	pericom_30216c_i2c_write(pericom_data, reg, 2);
+	pericom_31213a_i2c_write(p31213a_chip, reg, 2);
+
 	// 1.delay 30ms
-	msleep(30);
+	// msleep(30);
 	// 2.Read reg
-	pericom_30216c_i2c_read(pericom_data,  reg, 4);
-	dev_info(&pericom_data->i2c_client->dev, "2.reg=%x,%x,%x,%x\n",reg[0],reg[1],reg[2],reg[3]);
-	// 3.Processing
-	if ((reg[2] == 0x2) || (reg[3]==0x00) || (reg[3] == 0x80) ){ //detached
-		if ((reg[2] == 0x2) && (reg[3]==0x00))
-			plug_flag = false;
-		curr_mode = (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK); //enter trysnk drp mode
+	pericom_31213a_i2c_read(p31213a_chip,  reg, 4);
+	dev_info(&p31213a_chip->i2c_client->dev, "2.reg=%x,%x,%x,%x\n",reg[0],reg[1],reg[2],reg[3]);
+
+	// 3. Processing
+	control_status = reg[1];
+	int_status = reg[2];
+    if(int_status&0x02)
+		dev_info(&p31213a_chip->i2c_client->dev, "TypeC Unpluged.\n");
+	if(int_status&0x01)
+		dev_info(&p31213a_chip->i2c_client->dev, "TypeC Plugin.\n");
+	cc_status = reg[3];
+	if(cc_status&0x01)
+		dev_info(&p31213a_chip->i2c_client->dev, "CC1 connected.\n");
+	if(cc_status&0x02)
+		dev_info(&p31213a_chip->i2c_client->dev, "CC2 connected.\n");
+	port_status = (reg[3]>>2)&0x07;
+	if((cc_status&0x01)|(cc_status&0x02))
+	{
+		switch(port_status)
+		{
+			case 1:
+				dev_info(&p31213a_chip->i2c_client->dev, "Device plug in.\n");
+				// switch on vbus power in usb otg controller driver
+				extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB, false);
+				extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB_HOST, true);
+				break;
+			case 2:
+				dev_info(&p31213a_chip->i2c_client->dev, "Host plug in.\n");
+				extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB, true);
+				extcon_set_state_sync(p31213a_chip->extcon, EXTCON_USB_HOST, false);
+				break;
+			case 3:
+				dev_info(&p31213a_chip->i2c_client->dev, "Audio Adapter Accessory plug in.\n");
+				break;
+			case 4:
+				dev_info(&p31213a_chip->i2c_client->dev, "Debug Accessory plug in.\n");
+				break;
+			default:
+				break;
+		}
+		
 	}
-	else if (reg[2] == 0x01){ //attached
-		if ((reg[3] == 0x05) || (reg[3] == 0x06) || (reg[3] == 0x15) || (reg[3] == 0x16)){ // Attached port status:device
-		curr_mode = (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK); //enter trysnk drp mode
-		}
-		else if ((reg[3] == 0x13) || (reg[3] == 0x93)) {// Audio Adapter Accessory Attached
-		//
-		curr_mode = (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK); //enter trysnk drp mode
-		}
-		else if ((reg[3] == 0x0f) || (reg[3] == 0x8f)) {// Debug Accessory Attached
-		//
-		curr_mode = (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK); //enter trysnk drp mode	
-		}
-	else if ((reg[3] == 0xa9) || (reg[3] == 0x0aa) || (reg[3] == 0xc9) || (reg[3] == 0xca) || (reg[3] == 0xe9) || (reg[3] == 0xea)){
-		//
-		curr_mode = (PERICOM_ROLE_MODE_MASK|PERICOM_DRP2_TRY_SNK); //enter trysnk drp mode	 
-		}
+	if(reg[3]==0x04) // special process for PI5USB31213A
+	{
+		reg[1] = 0x01;
+		pericom_31213a_i2c_write(p31213a_chip, reg, 2);
+		msleep(30);
+		reg[1]= control_status;
+		pericom_31213a_i2c_write(p31213a_chip, reg, 2);
+		msleep(10);
 	}
-	msleep(20);
+
 	// 4. Unmask interrupt
 	reg[1] = curr_mode;
-	pericom_30216c_i2c_write(pericom_data, reg, 2);
+	pericom_31213a_i2c_write(p31213a_chip, reg, 2);
 	
 
 	return IRQ_HANDLED;
 }
 
-void jjj_test(struct pericom_30216c_data *pericom_data)
-{
-	char buf[4] = {0,0,0,0};
-
-	pericom_30216c_i2c_read(pericom_data,buf,4);
-	
-	printk("&&&&&&&&&&&&&&&&&& %02x %02x %02x %02x \n", buf[0], buf[1], buf[2], buf[3]);
-}
-
-static int pericom_30216c_probe(struct i2c_client *client,
+static int pericom_31213a_probe(struct i2c_client *client,
 		const struct i2c_device_id *dev_id)
 {
 	int retval = 0;
-	struct regulator *i2c_vdd;
-	struct pericom_30216c_data *pericom_data = client->dev.platform_data;
+	struct pericom_31213a_chip *p31213a_chip;
 	
-	printk("************************ typec *****\n");
+	printk("*****pericom_31213a_probe*****\n");
 
 	if (!i2c_check_functionality(client->adapter,
 			I2C_FUNC_SMBUS_BYTE_DATA)) {
@@ -408,143 +409,124 @@ static int pericom_30216c_probe(struct i2c_client *client,
 		return -EIO;
 	}
 
-	if (client->dev.of_node) {
-		pericom_data = devm_kzalloc(&client->dev,
-			sizeof(*pericom_data),
-			GFP_KERNEL);
-		if (!pericom_data) {
-			dev_err(&client->dev, "Failed to allocate memory\n");
+	p31213a_chip = devm_kzalloc(&client->dev,sizeof(*p31213a_chip),GFP_KERNEL);
+	if (!p31213a_chip) {
+		dev_err(&client->dev, "Failed to allocate memory\n");
 			return -ENOMEM;
-		}
 	}
 
-	if (!pericom_data) {
-		dev_err(&client->dev,
-				"%s: No platform data found\n",
-				__func__);
-		return -EINVAL;
+    p31213a_chip->dev = &client->dev;
+	
+	pericom_31213a_initgpio(p31213a_chip);
+	mutex_init(&(p31213a_chip->i2c_rw_mutex));
+	p31213a_chip->i2c_client = client;
+	p31213a_chip->irq = gpiod_to_irq(p31213a_chip->gpio_int);
+	if (p31213a_chip->irq < 0) {
+		dev_err(&client->dev,"Unable to request IRQ for INT_N GPIO! %d\n",p31213a_chip->irq);
+		retval = -ENXIO;
 	}
-
-	i2c_vdd = regulator_get(&client->dev, "i2c");
-	if (IS_ERR(i2c_vdd)) {
-		dev_err(&client->dev,	"Regulator get failed i2c ret=%ld\n", PTR_ERR(i2c_vdd));
-		goto  err_regulator;
-	}
-
-	retval = regulator_enable(i2c_vdd);
-	if (retval) {
-		dev_err(&client->dev, "Regulator set_vtg failed i2c ret=%d\n", retval);
-		goto  err_regulator;
-	}
-
-	msleep(100);
-
-	mutex_init(&(pericom_data->i2c_rw_mutex));
-	pericom_data->i2c_client = client;
-	pericom_data->irq = client->irq;
-	i2c_set_clientdata(client, pericom_data);
-
+	i2c_set_clientdata(client, p31213a_chip);
+	
 	//check ic present, if not present ,exit, or go on
-	if (!ic_is_present(pericom_data)) {
+	if (!ic_is_present(p31213a_chip)) {
 		dev_err(&client->dev, "The device is absent\n");
 		retval = -ENXIO;
-		goto  err_absent; //absent
 	}
-	
-	jjj_test(pericom_data);
-	
 
-	/* default drp mode and active power mode */
-	pericom_30216c_set_trysnk_drp_mode(pericom_data);			//initial 30216C and set trysnk drp mode to 30216c 
-	pericom_30216c_set_poweractive_mode(pericom_data);
+	p31213a_chip->extcon = devm_extcon_dev_allocate(&client->dev, pericom_31213a_cable);
+	if (IS_ERR(p31213a_chip->extcon)) {
+           dev_err(&client->dev, "failed to allocate extcon device\n");
+           retval = -ENXIO;;
+   }
+   
+    retval = devm_extcon_dev_register(&client->dev, p31213a_chip->extcon);
+    if (retval < 0) {
+          dev_err(&client->dev, "failed to register extcon device\n");
+          return retval;
+    }
+	
+	pericom_31213a_initialize(p31213a_chip);
+	
+	pericom_31213a_attached_state_detect(p31213a_chip);
+
 	/* interrupt */
-	retval = request_threaded_irq(pericom_data->irq, NULL,
-		pericom_30216c_irq_handler, IRQF_TRIGGER_LOW| IRQF_ONESHOT,
-		DRIVER_NAME, pericom_data);
+	retval = request_threaded_irq(p31213a_chip->irq, NULL,
+		pericom_31213a_irq_handler, IRQF_TRIGGER_LOW| IRQF_ONESHOT,
+		DRIVER_NAME, p31213a_chip);
 
 	if (retval < 0) {
 		dev_err(&client->dev,
 				"%s: Failed to create irq thread\n",
 				__func__);
-		goto err_absent;
 	}
 
-	/*register typec class*/
-	//pericom_data->c_dev.name = DRIVER_NAME;
-	//pericom_data->c_dev.get_mode = pericom_30216c_get_id_status;
-	//pericom_data->c_dev.set_mode = pericom_30216c_set_id_status;
-	//pericom_data->c_dev.get_direction = pericom_30216c_get_cc_pin;
-	//retval = typec_dev_register(&pericom_data->c_dev);
 	if (retval < 0)
 		goto err_fs;
-	//enable_irq(pericom_data->irq);
+	
+	pericom_31213a_irq_enable(p31213a_chip);
 
 	return retval;
 
 err_fs:
-       free_irq(pericom_data->irq,pericom_data);
+    free_irq(p31213a_chip->irq,p31213a_chip);
 
-err_absent:
-	regulator_disable(i2c_vdd);
-err_regulator:
-	devm_kfree(&client->dev,pericom_data);
 	return retval;
 }
 
-static int pericom_30216c_remove(struct i2c_client *client)
+static int pericom_31213a_remove(struct i2c_client *client)
 {
 	//enter power saving mode
-	struct pericom_30216c_data *pericom_data = i2c_get_clientdata(client);
+	struct pericom_31213a_chip *p31213a_chip = i2c_get_clientdata(client);
 
-	pericom_30216c_set_powersaving_mode(pericom_data);
+	pericom_31213a_set_powersaving_mode(p31213a_chip);
 	return 0;
 }
 
-static void pericom_30216c_shutdown(struct i2c_client *client)
+static void pericom_31213a_shutdown(struct i2c_client *client)
 {
 	//enter power saving mode
-	struct pericom_30216c_data *pericom_data = i2c_get_clientdata(client);
+	struct pericom_31213a_chip *p31213a_chip = i2c_get_clientdata(client);
 
-	pericom_30216c_set_powersaving_mode(pericom_data);
+	pericom_31213a_set_powersaving_mode(p31213a_chip);
 }
 
-static const struct i2c_device_id pericom_30216c_id_table[] = {
+static const struct i2c_device_id pericom_31213a_id_table[] = {
 	{DRIVER_NAME, 0},
 	{},
 };
-MODULE_DEVICE_TABLE(i2c, pericom_30216c_id_table);
+MODULE_DEVICE_TABLE(i2c, pericom_31213a_id_table);
 
 static struct of_device_id pericom_match_table[] = {
-	{ .compatible = "pericom,30216c",},
+	{ .compatible = "pericom,31213a",},
 	{ },
 };
 
-static struct i2c_driver pericom_30216c_driver = {
+static struct i2c_driver pericom_31213a_driver = {
 	.driver = {
 		.name = DRIVER_NAME,
 		.owner = THIS_MODULE,
 		.of_match_table = pericom_match_table,
 
 	},
-	.probe = pericom_30216c_probe,
-	.remove = pericom_30216c_remove,
-	.shutdown = pericom_30216c_shutdown,
-	.id_table = pericom_30216c_id_table,
+	.probe = pericom_31213a_probe,
+	.remove = pericom_31213a_remove,
+	.shutdown = pericom_31213a_shutdown,
+	.id_table = pericom_31213a_id_table,
 };
 
-static int __init pericom_30216c_init(void)
+static int __init pericom_31213a_init(void)
 {
-	return i2c_add_driver(&pericom_30216c_driver);
+	return i2c_add_driver(&pericom_31213a_driver);
 }
 
-static void __exit pericom_30216c_exit(void)
+static void __exit pericom_31213a_exit(void)
 {
-	i2c_del_driver(&pericom_30216c_driver);
+	i2c_del_driver(&pericom_31213a_driver);
 }
 
-module_init(pericom_30216c_init);
-module_exit(pericom_30216c_exit);
+module_init(pericom_31213a_init);
+module_exit(pericom_31213a_exit);
 
 MODULE_AUTHOR("Pericom, Inc.");
-MODULE_DESCRIPTION("Pericom 30216C I2C  Driver");
+MODULE_DESCRIPTION("Pericom 31213A I2C  Driver");
 MODULE_LICENSE("GPL v2");
