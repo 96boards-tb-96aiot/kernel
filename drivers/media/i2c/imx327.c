@@ -988,6 +988,8 @@ static int imx327_probe(struct i2c_client *client,
 	if (ret)
 		goto err_free_handler;
 
+	msleep(10); // hxy add for rk1808 96boards
+
 	ret = imx327_check_sensor_id(imx327, client);
 	if (ret)
 		goto err_power_off;

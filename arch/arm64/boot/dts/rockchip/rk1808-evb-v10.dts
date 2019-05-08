@@ -128,7 +128,7 @@
 	};
 };
 
-&i2c3 {
+&i2c2 {
 	status = "okay";
 
 	clock-frequency = <100000>;
@@ -627,4 +627,10 @@
         };
 
 
+};
+&gmac {
+	status = "disabled";
+};
+&i2s0 {
+	status = "okay";
 };
