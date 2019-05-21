@@ -658,14 +658,14 @@ disable_clk:
 }
 
 static void __imx327_power_off(struct imx327 *imx327)
-{
+{/*
 	if (!IS_ERR(imx327->pwdn_gpio))
 		gpiod_set_value_cansleep(imx327->pwdn_gpio, 0);
 	clk_disable_unprepare(imx327->xvclk);
 	if (!IS_ERR(imx327->reset_gpio))
 		gpiod_set_value_cansleep(imx327->reset_gpio, 0);
 	regulator_bulk_disable(IMX327_NUM_SUPPLIES, imx327->supplies);
-}
+*/}
 
 static int imx327_runtime_resume(struct device *dev)
 {

@@ -629,7 +629,7 @@
 
 };
 &gmac {
-	status = "disabled";
+	status = "okay";
 };
 &i2s0 {
 	status = "okay";
