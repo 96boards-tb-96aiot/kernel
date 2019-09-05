@@ -3,6 +3,8 @@
  * jx_h65 driver
  *
  * Copyright (C) 2019 Fuzhou Rockchip Electronics Co., Ltd.
+ *
+ * V0.0X01.0X01 add poweron function.
  */
 
 #include <linux/clk.h>
@@ -19,6 +21,8 @@
 #include <media/v4l2-async.h>
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-subdev.h>
+
+#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x01)
 
 #ifndef V4L2_CID_DIGITAL_GAIN
 #define V4L2_CID_DIGITAL_GAIN		V4L2_CID_GAIN
@@ -110,6 +114,7 @@ struct jx_h65 {
 	struct v4l2_ctrl	*test_pattern;
 	struct mutex		mutex;
 	bool			streaming;
+	bool			power_on;
 	const struct jx_h65_mode *cur_mode;
 	u32			module_index;
 	const char		*module_facing;
@@ -718,6 +723,37 @@ unlock_and_return:
 	return ret;
 }
 
+static int jx_h65_s_power(struct v4l2_subdev *sd, int on)
+{
+	struct jx_h65 *jx_h65 = to_jx_h65(sd);
+	struct i2c_client *client = jx_h65->client;
+	int ret = 0;
+
+	mutex_lock(&jx_h65->mutex);
+
+	/* If the power state is not modified - no work to do. */
+	if (jx_h65->power_on == !!on)
+		goto unlock_and_return;
+
+	if (on) {
+		ret = pm_runtime_get_sync(&client->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(&client->dev);
+			goto unlock_and_return;
+		}
+
+		jx_h65->power_on = true;
+	} else {
+		pm_runtime_put(&client->dev);
+		jx_h65->power_on = false;
+	}
+
+unlock_and_return:
+	mutex_unlock(&jx_h65->mutex);
+
+	return ret;
+}
+
 static int __jx_h65_power_on(struct jx_h65 *jx_h65)
 {
 	int ret;
@@ -828,6 +864,7 @@ static const struct v4l2_subdev_internal_ops jx_h65_internal_ops = {
 #endif
 
 static const struct v4l2_subdev_core_ops jx_h65_core_ops = {
+	.s_power = jx_h65_s_power,
 	.ioctl = jx_h65_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = jx_h65_compat_ioctl32,
@@ -1033,6 +1070,11 @@ static int jx_h65_probe(struct i2c_client *client,
 	struct v4l2_subdev *sd;
 	char facing[2];
 	int ret;
+
+	dev_info(dev, "driver version: %02x.%02x.%02x",
+		DRIVER_VERSION >> 16,
+		(DRIVER_VERSION & 0xff00) >> 8,
+		DRIVER_VERSION & 0x00ff);
 
 	jx_h65 = devm_kzalloc(dev, sizeof(*jx_h65), GFP_KERNEL);
 	if (!jx_h65)

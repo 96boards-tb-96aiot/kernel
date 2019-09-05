@@ -712,6 +712,17 @@ config VIDEO_OV8858
 	  To compile this driver as a module, choose M here: the
 	  module will be called ov8858.
 
+config VIDEO_OV9281
+	tristate "OmniVision OV9281 sensor support"
+	depends on I2C && VIDEO_V4L2
+	depends on MEDIA_CAMERA_SUPPORT
+	help
+	  This is a Video4Linux2 sensor-level driver for the OmniVision
+	  OV9281 camera.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called ov9281.
+
 config VIDEO_OV9650
 	tristate "OmniVision OV9650/OV9652 sensor support"
 	depends on I2C && VIDEO_V4L2 && VIDEO_V4L2_SUBDEV_API
@@ -916,7 +927,7 @@ config VIDEO_GC8034
 	  module will be called gc8034.
 
 config VIDEO_SC031GS
-	tristate "GalaxyCore SC031GS sensor support"
+	tristate "SmartSens SC031GS sensor support"
 	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
 	default y
 	help
@@ -924,6 +935,16 @@ config VIDEO_SC031GS
 
 	  To compile this driver as a module, choose M here: the
 	  module will be called sc031gs.
+
+config VIDEO_SC132GS
+	tristate "SmartSens SC132GS sensor support"
+	depends on VIDEO_V4L2 && I2C && VIDEO_V4L2_SUBDEV_API
+	default n
+	help
+	  Support for the Smartsens SC132GS sensor.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called sc132gs.
 
 config VIDEO_GC0329
 	tristate "GalaxyCore GC0329 sensor support"
@@ -1006,6 +1027,14 @@ config VIDEO_LM3646
 	  This is a driver for the lm3646 dual flash controllers. It controls
 	  flash, torch LEDs.
 
+config VIDEO_SGM3784
+	tristate "SGM3784 dual flash driver support"
+	depends on I2C && VIDEO_V4L2 && MEDIA_CONTROLLER
+	depends on VIDEO_V4L2_SUBDEV_API
+	help
+	  This is a driver for the sgm3784 dual flash controllers. It controls
+	  flash, torch LEDs.
+
 comment "Video improvement chips"
 
 config VIDEO_UPD64031A
@@ -1047,6 +1076,13 @@ config VIDEO_DW9714
 	---help---
 	  This is a driver for the DW9714 camera lens voice coil.
 
+config VIDEO_FP5510
+	tristate "FP5510 lens voice coil support"
+	depends on I2C && VIDEO_V4L2 && MEDIA_CONTROLLER
+	depends on VIDEO_V4L2_SUBDEV_API
+	---help---
+	  This is a driver for the FP5510 camera lens voice coil.
+
 comment "Audio/Video compression chips"
 
 config VIDEO_SAA6752HS
@@ -1079,6 +1115,15 @@ config VIDEO_M52790
 
 	 To compile this driver as a module, choose M here: the
 	 module will be called m52790.
+
+config VIDEO_NVP6324
+	tristate "NEXTCHIP nvp6324 driver support"
+	depends on VIDEO_V4L2 && I2C
+	---help---
+	  Support for the NVP6324.
+
+	  To compile this driver as a module, choose M here: the
+	  module will be called jaguar1_drv.
 endmenu
 
 menu "Sensors used on soc_camera driver"

@@ -491,7 +491,7 @@ static const struct capture_fmt raw_fmts[] = {
 		.bpp = { 8 },
 		.mplanes = 1,
 	}, {
-		.fourcc = V4L2_PIX_FMT_SRGGB8,
+		.fourcc = V4L2_PIX_FMT_SRGGB10,
 		.fmt_type = FMT_BAYER,
 		.bpp = { 10 },
 		.mplanes = 1,
@@ -645,7 +645,7 @@ static struct stream_config rkisp1_sp_stream_config = {
 
 static struct stream_config rkisp1_raw_stream_config = {
 	.fmts = raw_fmts,
-	.fmt_size = ARRAY_SIZE(mp_fmts),
+	.fmt_size = ARRAY_SIZE(raw_fmts),
 };
 
 static const
@@ -944,6 +944,7 @@ static int raw_config_mi(struct rkisp1_stream *stream)
 
 		in_size = raw->out_fmt.plane_fmt[0].sizeimage;
 	}
+
 	dmatx0_set_pic_size(base, in_frm->width, in_frm->height);
 	dmatx0_set_pic_off(base, 0);
 	dmatx0_ctrl(base,
@@ -1340,8 +1341,10 @@ static void rkisp1_buf_queue(struct vb2_buffer *vb)
 			u32 sizeimage = pixm->plane_fmt[0].sizeimage;
 			u32 *buf = vb2_plane_vaddr(vb, 0);
 
-			*buf = RKISP1_DMATX_CHECK;
-			*(buf + sizeimage / 4 - 1) = RKISP1_DMATX_CHECK;
+			if (buf) {
+				*buf = RKISP1_DMATX_CHECK;
+				*(buf + sizeimage / 4 - 1) = RKISP1_DMATX_CHECK;
+			}
 		}
 	}
 
@@ -1594,14 +1597,14 @@ static int rkisp_init_vb2_queue(struct vb2_queue *q,
 	node = queue_to_node(q);
 
 	q->type = buf_type;
-	q->io_modes = VB2_MMAP | VB2_DMABUF;
+	q->io_modes = VB2_MMAP | VB2_USERPTR | VB2_DMABUF;
 	q->drv_priv = stream;
 	q->ops = &rkisp1_vb2_ops;
 	q->mem_ops = &vb2_dma_contig_memops;
 	q->buf_struct_size = sizeof(struct rkisp1_buffer);
 	q->min_buffers_needed = CIF_ISP_REQ_BUFS_MIN;
 	q->timestamp_flags = V4L2_BUF_FLAG_TIMESTAMP_MONOTONIC;
-	q->lock = &node->vlock;
+	q->lock = &stream->ispdev->apilock;
 
 	return vb2_queue_init(q);
 }
@@ -1711,45 +1714,20 @@ static int rkisp1_set_fmt(struct rkisp1_stream *stream,
 	return 0;
 }
 
-static int rkisp1_dma_attach_device(struct rkisp1_device *rkisp1_dev)
-{
-	struct iommu_domain *domain = rkisp1_dev->domain;
-	struct device *dev = rkisp1_dev->dev;
-	int ret;
-
-	ret = iommu_attach_device(domain, dev);
-	if (ret) {
-		dev_err(dev, "Failed to attach iommu device\n");
-		return ret;
-	}
-
-	if (!common_iommu_setup_dma_ops(dev, 0x10000000, SZ_2G, domain->ops)) {
-		dev_err(dev, "Failed to set dma_ops\n");
-		iommu_detach_device(domain, dev);
-		ret = -ENODEV;
-	}
-
-	return ret;
-}
-
-static void rkisp1_dma_detach_device(struct rkisp1_device *rkisp1_dev)
-{
-	struct iommu_domain *domain = rkisp1_dev->domain;
-	struct device *dev = rkisp1_dev->dev;
-
-	iommu_detach_device(domain, dev);
-}
-
 int rkisp1_fh_open(struct file *filp)
 {
 	struct rkisp1_stream *stream = video_drvdata(filp);
 	struct rkisp1_device *dev = stream->ispdev;
+	struct video_device *vdev = &stream->vnode.vdev;
 	int ret;
 
 	ret = v4l2_fh_open(filp);
 	if (!ret) {
-		if (atomic_inc_return(&dev->open_cnt) == 1)
-			rkisp1_dma_attach_device(dev);
+		atomic_inc(&dev->open_cnt);
+		ret = dev->pipe.pm_use(&vdev->entity, 1);
+		if (ret < 0)
+			v4l2_err(&dev->v4l2_dev,
+				"set pipeline power failed %d\n", ret);
 	}
 
 	return ret;
@@ -1759,12 +1737,18 @@ int rkisp1_fop_release(struct file *file)
 {
 	struct rkisp1_stream *stream = video_drvdata(file);
 	struct rkisp1_device *dev = stream->ispdev;
+	struct video_device *vdev = &stream->vnode.vdev;
 	int ret;
 
 	ret = vb2_fop_release(file);
+	if (!ret) {
+		ret = dev->pipe.pm_use(&vdev->entity, 0);
+		if (ret < 0)
+			v4l2_err(&dev->v4l2_dev,
+				"set pipeline power failed %d\n", ret);
 
-	if (atomic_dec_return(&dev->open_cnt) == 0)
-		rkisp1_dma_detach_device(dev);
+		atomic_dec(&dev->open_cnt);
+	}
 
 	return ret;
 }
@@ -2074,14 +2058,13 @@ static int rkisp1_register_stream_vdev(struct rkisp1_stream *stream)
 	}
 	strlcpy(vdev->name, vdev_name, sizeof(vdev->name));
 	node = vdev_to_node(vdev);
-	mutex_init(&node->vlock);
 
 	vdev->ioctl_ops = &rkisp1_v4l2_ioctl_ops;
 	vdev->release = video_device_release_empty;
 	vdev->fops = &rkisp1_fops;
 	vdev->minor = -1;
 	vdev->v4l2_dev = v4l2_dev;
-	vdev->lock = &node->vlock;
+	vdev->lock = &dev->apilock;
 	vdev->device_caps = V4L2_CAP_VIDEO_CAPTURE_MPLANE |
 				V4L2_CAP_STREAMING;
 	video_set_drvdata(vdev, stream);
@@ -2130,6 +2113,35 @@ err:
 	}
 
 	return ret;
+}
+
+int rkisp1_dma_attach_device(struct rkisp1_device *rkisp1_dev)
+{
+	struct iommu_domain *domain = rkisp1_dev->domain;
+	struct device *dev = rkisp1_dev->dev;
+	int ret;
+
+	ret = iommu_attach_device(domain, dev);
+	if (ret) {
+		dev_err(dev, "Failed to attach iommu device\n");
+		return ret;
+	}
+
+	if (!common_iommu_setup_dma_ops(dev, 0x10000000, SZ_2G, domain->ops)) {
+		dev_err(dev, "Failed to set dma_ops\n");
+		iommu_detach_device(domain, dev);
+		ret = -ENODEV;
+	}
+
+	return ret;
+}
+
+void rkisp1_dma_detach_device(struct rkisp1_device *rkisp1_dev)
+{
+	struct iommu_domain *domain = rkisp1_dev->domain;
+	struct device *dev = rkisp1_dev->dev;
+
+	iommu_detach_device(domain, dev);
 }
 
 /****************  Interrupter Handler ****************/
@@ -2216,6 +2228,8 @@ void rkisp1_mipi_dmatx0_end(u32 status, struct rkisp1_device *dev)
 			u32 sizeimage = stream->out_fmt.plane_fmt[0].sizeimage;
 
 			buf = (u32 *)vb2_plane_vaddr(&stream->curr_buf->vb.vb2_buf, 0);
+			if (!buf)
+				goto out;
 			end = *(buf + sizeimage / 4 - 1);
 			while (end == RKISP1_DMATX_CHECK) {
 				udelay(1);
@@ -2235,6 +2249,7 @@ void rkisp1_mipi_dmatx0_end(u32 status, struct rkisp1_device *dev)
 				}
 			}
 		}
+out:
 		mi_frame_end(stream);
 	}
 }

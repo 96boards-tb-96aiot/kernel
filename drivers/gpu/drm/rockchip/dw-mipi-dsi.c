@@ -605,7 +605,7 @@ static int dw_mipi_dsi_turn_around_request(struct dw_mipi_dsi *dsi)
 	 * assign dphy_tx1_phyturnrequest = grf_dphy_tx1rx1_basedir ?
 	 * dphy_tx1_phyturnrequest_i : grf_dphy_tx1rx1_turnrequest[0]
 	 */
-	if (!IS_DSI1(dsi))
+	if (!IS_DSI1(dsi) || dsi->pdata->soc_type != RK3288)
 		return 0;
 
 	/* Set TURNREQUEST_N = 1'b1 */
@@ -847,12 +847,14 @@ static int dw_mipi_dsi_read_from_fifo(struct dw_mipi_dsi *dsi,
 				      const struct mipi_dsi_msg *msg)
 {
 	u8 *payload = msg->rx_buf;
+	unsigned int vrefresh = drm_mode_vrefresh(&dsi->mode);
 	u16 length;
 	u32 val;
 	int ret;
 
 	ret = regmap_read_poll_timeout(dsi->regmap, DSI_CMD_PKT_STATUS,
-				       val, !(val & GEN_RD_CMD_BUSY), 50, 5000);
+				       val, !(val & GEN_RD_CMD_BUSY),
+				       0, DIV_ROUND_UP(1000000, vrefresh));
 	if (ret) {
 		dev_err(dsi->dev, "entire response isn't stored in the FIFO\n");
 		return ret;
@@ -1650,11 +1652,18 @@ static int dw_mipi_dsi_register(struct drm_device *drm,
 		drm_connector_helper_add(connector,
 					 &dw_mipi_dsi_connector_helper_funcs);
 		drm_mode_connector_attach_encoder(connector, encoder);
-		drm_panel_attach(dsi->panel, connector);
+
+		ret = drm_panel_attach(dsi->panel, &dsi->connector);
+		if (ret) {
+			dev_err(dev, "Failed to attach panel: %d\n", ret);
+			goto connector_cleanup;
+		}
 	}
 
 	return 0;
 
+connector_cleanup:
+	drm_connector_cleanup(connector);
 encoder_cleanup:
 	drm_encoder_cleanup(encoder);
 	return ret;
@@ -1700,6 +1709,9 @@ static void dw_mipi_dsi_unbind(struct device *dev, struct device *master,
 	void *data)
 {
 	struct dw_mipi_dsi *dsi = dev_get_drvdata(dev);
+
+	if (dsi->panel)
+		drm_panel_detach(dsi->panel);
 
 	pm_runtime_disable(dev);
 	if (dsi->slave)

@@ -3,6 +3,8 @@
  * sc031gs driver
  *
  * Copyright (C) 2017 Fuzhou Rockchip Electronics Co., Ltd.
+ *
+ * V0.0X01.0X01 add poweron function.
  */
 
 #include <linux/clk.h>
@@ -22,7 +24,7 @@
 #include <media/v4l2-ctrls.h>
 #include <media/v4l2-subdev.h>
 
-#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x0)
+#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x01)
 
 #ifndef V4L2_CID_DIGITAL_GAIN
 #define V4L2_CID_DIGITAL_GAIN		V4L2_CID_GAIN
@@ -113,6 +115,7 @@ struct sc031gs {
 	struct v4l2_ctrl	*test_pattern;
 	struct mutex		mutex;
 	bool			streaming;
+	bool			power_on;
 	const struct sc031gs_mode *cur_mode;
 	u32			module_index;
 	const char		*module_facing;
@@ -746,6 +749,37 @@ static int sc031gs_g_frame_interval(struct v4l2_subdev *sd,
 	return 0;
 }
 
+static int sc031gs_s_power(struct v4l2_subdev *sd, int on)
+{
+	struct sc031gs *sc031gs = to_sc031gs(sd);
+	struct i2c_client *client = sc031gs->client;
+	int ret = 0;
+
+	mutex_lock(&sc031gs->mutex);
+
+	/* If the power state is not modified - no work to do. */
+	if (sc031gs->power_on == !!on)
+		goto unlock_and_return;
+
+	if (on) {
+		ret = pm_runtime_get_sync(&client->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(&client->dev);
+			goto unlock_and_return;
+		}
+
+		sc031gs->power_on = true;
+	} else {
+		pm_runtime_put(&client->dev);
+		sc031gs->power_on = false;
+	}
+
+unlock_and_return:
+	mutex_unlock(&sc031gs->mutex);
+
+	return ret;
+}
+
 /* Calculate the delay in us by clock rate and clock cycles */
 static inline u32 sc031gs_cal_delay(u32 cycles)
 {
@@ -860,6 +894,7 @@ static const struct v4l2_subdev_internal_ops sc031gs_internal_ops = {
 #endif
 
 static const struct v4l2_subdev_core_ops sc031gs_core_ops = {
+	.s_power = sc031gs_s_power,
 	.ioctl = sc031gs_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = sc031gs_compat_ioctl32,
@@ -1022,7 +1057,7 @@ static int sc031gs_check_sensor_id(struct sc031gs *sc031gs,
 			      SC031GS_REG_VALUE_16BIT, &id);
 	if (id != CHIP_ID) {
 		dev_err(dev, "Unexpected sensor id(%04x), ret(%d)\n", id, ret);
-		return ret;
+		return -ENODEV;
 	}
 
 	dev_info(dev, "Detected SC031GS CHIP ID = 0x%04x sensor\n", CHIP_ID);

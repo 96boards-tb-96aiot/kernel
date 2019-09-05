@@ -3,6 +3,8 @@
  * gc2385 driver
  *
  * Copyright (C) 2017 Fuzhou Rockchip Electronics Co., Ltd.
+ *
+ * V0.0X01.0X01 add poweron function.
  */
 
 #include <linux/clk.h>
@@ -22,7 +24,7 @@
 #include <media/v4l2-subdev.h>
 #include <linux/pinctrl/consumer.h>
 
-#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x0)
+#define DRIVER_VERSION			KERNEL_VERSION(0, 0x01, 0x01)
 
 #ifndef V4L2_CID_DIGITAL_GAIN
 #define V4L2_CID_DIGITAL_GAIN		V4L2_CID_GAIN
@@ -114,6 +116,7 @@ struct gc2385 {
 	struct v4l2_ctrl	*vblank;
 	struct mutex		mutex;
 	bool			streaming;
+	bool			power_on;
 	const struct gc2385_mode *cur_mode;
 	u32			module_index;
 	const char		*module_facing;
@@ -516,9 +519,6 @@ static int __gc2385_start_stream(struct gc2385 *gc2385)
 {
 	int ret;
 
-	ret = gc2385_write_array(gc2385->client, gc2385_global_regs);
-	if (ret)
-		return ret;
 	ret = gc2385_write_array(gc2385->client, gc2385->cur_mode->reg_list);
 	if (ret)
 		return ret;
@@ -586,6 +586,44 @@ unlock_and_return:
 	return ret;
 }
 
+static int gc2385_s_power(struct v4l2_subdev *sd, int on)
+{
+	struct gc2385 *gc2385 = to_gc2385(sd);
+	struct i2c_client *client = gc2385->client;
+	int ret = 0;
+
+	mutex_lock(&gc2385->mutex);
+
+	/* If the power state is not modified - no work to do. */
+	if (gc2385->power_on == !!on)
+		goto unlock_and_return;
+
+	if (on) {
+		ret = pm_runtime_get_sync(&client->dev);
+		if (ret < 0) {
+			pm_runtime_put_noidle(&client->dev);
+			goto unlock_and_return;
+		}
+
+		ret = gc2385_write_array(gc2385->client, gc2385_global_regs);
+		if (ret) {
+			v4l2_err(sd, "could not set init registers\n");
+			pm_runtime_put_noidle(&client->dev);
+			goto unlock_and_return;
+		}
+
+		gc2385->power_on = true;
+	} else {
+		pm_runtime_put(&client->dev);
+		gc2385->power_on = false;
+	}
+
+unlock_and_return:
+	mutex_unlock(&gc2385->mutex);
+
+	return ret;
+}
+
 /* Calculate the delay in us by clock rate and clock cycles */
 static inline u32 gc2385_cal_delay(u32 cycles)
 {
@@ -626,7 +664,7 @@ static int __gc2385_power_on(struct gc2385 *gc2385)
 
 	usleep_range(500, 1000);
 	if (!IS_ERR(gc2385->pwdn_gpio))
-		gpiod_set_value_cansleep(gc2385->pwdn_gpio, 0);
+		gpiod_set_value_cansleep(gc2385->pwdn_gpio, 1);
 
 	/* 8192 cycles prior to first SCCB transaction */
 	delay_us = gc2385_cal_delay(8192);
@@ -645,7 +683,7 @@ static void __gc2385_power_off(struct gc2385 *gc2385)
 	int ret = 0;
 
 	if (!IS_ERR(gc2385->pwdn_gpio))
-		gpiod_set_value_cansleep(gc2385->pwdn_gpio, 1);
+		gpiod_set_value_cansleep(gc2385->pwdn_gpio, 0);
 	clk_disable_unprepare(gc2385->xvclk);
 	if (!IS_ERR(gc2385->reset_gpio))
 		gpiod_set_value_cansleep(gc2385->reset_gpio, 1);
@@ -712,6 +750,7 @@ static const struct v4l2_subdev_internal_ops gc2385_internal_ops = {
 #endif
 
 static const struct v4l2_subdev_core_ops gc2385_core_ops = {
+	.s_power = gc2385_s_power,
 	.ioctl = gc2385_ioctl,
 #ifdef CONFIG_COMPAT
 	.compat_ioctl32 = gc2385_compat_ioctl32,
@@ -1000,7 +1039,7 @@ static int gc2385_check_sensor_id(struct gc2385 *gc2385,
 	id = ((reg_H << 8) & 0xff00) | (reg_L & 0xff);
 	if (id != CHIP_ID) {
 		dev_err(dev, "Unexpected sensor id(%06x), ret(%d)\n", id, ret);
-		return ret;
+		return -ENODEV;
 	}
 	return ret;
 }
