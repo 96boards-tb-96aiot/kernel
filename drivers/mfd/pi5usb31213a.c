@@ -399,7 +399,7 @@ static int pericom_31213a_probe(struct i2c_client *client,
 	int retval = 0;
 	struct pericom_31213a_chip *p31213a_chip;
 	
-	printk("*****pericom_31213a_probe*****\n");
+	//printk("*****pericom_31213a_probe*****\n");
 
 	if (!i2c_check_functionality(client->adapter,
 			I2C_FUNC_SMBUS_BYTE_DATA)) {
@@ -429,7 +429,11 @@ static int pericom_31213a_probe(struct i2c_client *client,
 	
 	//check ic present, if not present ,exit, or go on
 	if (!ic_is_present(p31213a_chip)) {
-		dev_err(&client->dev, "The device is absent\n");
+		//dev_err(&client->dev, "The device is absent\n");
+		while(1)
+		{
+			msleep(100);
+		}
 		retval = -ENXIO;
 	}
 
