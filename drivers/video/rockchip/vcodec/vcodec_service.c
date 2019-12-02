@@ -4001,7 +4001,7 @@ static void get_hw_info(struct vpu_subdev_data *data)
 		of_machine_is_compatible("rockchip,rk3229"))
 		pservice->soft_reset = true;
 	else
-		pservice->soft_reset = false;
+		pservice->soft_reset = true;
 }
 
 static bool check_irq_err(struct vpu_task_info *task, u32 irq_status)
