@@ -1,7 +1,7 @@
 /* SPDX-License-Identifier: GPL-2.0 */
 
 /* Copyright (c) 2018 Rockchip Electronics Co. Ltd.
- * date: 2019-04-19
+ * date: 2019-10-28
  */
 	.arch armv8-a
 	.file	"rk_sftl.c"
@@ -12194,21 +12194,22 @@ FtlWriteToIDB:
 	ldr	w2, [x26]
 	cmp	w2, w1
 	bne	.L1776
-	ldrh	w1, [x0, 10]
-	mov	x0, 262140
-	mov	w20, 65535
-	add	x2, x26, x0
-	mov	w3, 4097
+	add	x1, x26, 258048
+	ldrh	w22, [x0, 10]
+	add	x1, x1, 2044
 	mov	w0, 0
+	mov	w20, 65023
+	mov	w2, 4097
 .L1780:
-	ldr	w4, [x2]
-	cbnz	w4, .L1777
-	ldr	w4, [x26, w0, uxtw 2]
+	ldr	w3, [x1]
+	cbnz	w3, .L1777
+	ldr	w3, [x26, w0, uxtw 2]
 	add	w0, w0, 1
-	str	w4, [x2], -4
-	cmp	w0, w3
+	str	w3, [x1, 2048]
+	cmp	w0, w2
 	sub	w20, w20, #1
 	csel	w0, w0, wzr, cc
+	sub	x1, x1, #4
 	cmp	w20, 4096
 	bne	.L1780
 	mov	w20, 512
@@ -12217,15 +12218,19 @@ FtlWriteToIDB:
 	add	w20, w20, 127
 	lsr	w20, w20, 7
 .L1779:
-	ubfiz	w0, w1, 2, 14
-	add	w22, w20, 4
+	ubfiz	w22, w22, 2, 14
+	mov	w1, w20
+	adrp	x0, .LC130
 	add	x19, x21, :lo12:.LANCHOR0
+	add	x0, x0, :lo12:.LC130
 	mov	w23, 0
-	str	wzr, [x29, 140]
-	udiv	w22, w22, w0
-	lsl	w0, w20, 7
-	str	w0, [x29, 128]
+	udiv	w22, w20, w22
 	add	w22, w22, 1
+	mov	w2, w22
+	bl	sftl_printk
+	lsl	w0, w20, 7
+	str	wzr, [x29, 140]
+	str	w0, [x29, 128]
 .L1802:
 	ldr	x0, [x19, 4000]
 	mov	w1, 0
@@ -12393,8 +12398,8 @@ FtlWriteToIDB:
 	mov	w1, w23
 	ldr	w3, [x28]
 	mov	w4, w24
-	adrp	x0, .LC130
-	add	x0, x0, :lo12:.LC130
+	adrp	x0, .LC131
+	add	x0, x0, :lo12:.LC131
 	bl	sftl_printk
 	ldrh	w1, [x19, 10]
 	mov	w0, 0
@@ -12403,7 +12408,7 @@ FtlWriteToIDB:
 	blr	x2
 .L1800:
 	add	w23, w23, w22
-	cmp	w23, 15
+	cmp	w23, 7
 	bls	.L1802
 	ldr	w0, [x29, 140]
 	cbnz	w0, .L1803
@@ -12528,8 +12533,8 @@ FtlWriteToIDB:
 	mov	w4, w22
 	mov	x3, x20
 	mov	w2, 262144
-	adrp	x0, .LC132
-	add	x0, x0, :lo12:.LC132
+	adrp	x0, .LC133
+	add	x0, x0, :lo12:.LC133
 	bl	sftl_printk
 	lsl	w2, w22, 9
 	mov	x1, x23
@@ -12540,8 +12545,8 @@ FtlWriteToIDB:
 	adrp	x1, .LANCHOR1
 	add	x1, x1, :lo12:.LANCHOR1
 	add	x1, x1, 752
-	adrp	x0, .LC131
-	add	x0, x0, :lo12:.LC131
+	adrp	x0, .LC132
+	add	x0, x0, :lo12:.LC132
 	bl	sftl_printk
 	b	.L1804
 .L1807:
@@ -12916,8 +12921,8 @@ rk_sftl_vendor_storage_ioctl:
 	mov	x2, x20
 	mov	w1, 256
 .L1915:
-	adrp	x0, .LC133
-	add	x0, x0, :lo12:.LC133
+	adrp	x0, .LC134
+	add	x0, x0, :lo12:.LC134
 	bl	sftl_printk
 	b	.L1910
 .L1888:
@@ -13197,184 +13202,184 @@ rk_sftl_vendor_register:
 	.section	.rodata
 	.align	3
 	.set	.LANCHOR1,. + 0
-	.type	__func__.3803, %object
-	.size	__func__.3803, 17
-__func__.3803:
+	.type	__func__.3807, %object
+	.size	__func__.3807, 17
+__func__.3807:
 	.string	"INSERT_DATA_LIST"
 	.zero	7
-	.type	__func__.3798, %object
-	.size	__func__.3798, 17
-__func__.3798:
+	.type	__func__.3802, %object
+	.size	__func__.3802, 17
+__func__.3802:
 	.string	"INSERT_FREE_LIST"
 	.zero	7
-	.type	__func__.3834, %object
-	.size	__func__.3834, 17
-__func__.3834:
+	.type	__func__.3838, %object
+	.size	__func__.3838, 17
+__func__.3838:
 	.string	"List_remove_node"
 	.zero	7
-	.type	__func__.3866, %object
-	.size	__func__.3866, 22
-__func__.3866:
+	.type	__func__.3870, %object
+	.size	__func__.3870, 22
+__func__.3870:
 	.string	"List_update_data_list"
 	.zero	2
-	.type	__func__.3973, %object
-	.size	__func__.3973, 22
-__func__.3973:
+	.type	__func__.3977, %object
+	.size	__func__.3977, 22
+__func__.3977:
 	.string	"select_l2p_ram_region"
 	.zero	2
-	.type	__func__.4300, %object
-	.size	__func__.4300, 16
-__func__.4300:
+	.type	__func__.4304, %object
+	.size	__func__.4304, 16
+__func__.4304:
 	.string	"make_superblock"
-	.type	__func__.4475, %object
-	.size	__func__.4475, 19
-__func__.4475:
+	.type	__func__.4479, %object
+	.size	__func__.4479, 19
+__func__.4479:
 	.string	"get_new_active_ppa"
 	.zero	5
-	.type	__func__.16146, %object
-	.size	__func__.16146, 17
-__func__.16146:
+	.type	__func__.16195, %object
+	.size	__func__.16195, 17
+__func__.16195:
 	.string	"FlashEraseBlocks"
 	.zero	7
-	.type	__func__.3908, %object
-	.size	__func__.3908, 26
-__func__.3908:
+	.type	__func__.3912, %object
+	.size	__func__.3912, 26
+__func__.3912:
 	.string	"ftl_map_blk_alloc_new_blk"
 	.zero	6
-	.type	__func__.3413, %object
-	.size	__func__.3413, 11
-__func__.3413:
+	.type	__func__.3417, %object
+	.size	__func__.3417, 11
+__func__.3417:
 	.string	"FtlMemInit"
 	.zero	5
-	.type	__func__.3640, %object
-	.size	__func__.3640, 14
-__func__.3640:
+	.type	__func__.3644, %object
+	.size	__func__.3644, 14
+__func__.3644:
 	.string	"FtlBbt2Bitmap"
 	.zero	2
-	.type	__func__.4321, %object
-	.size	__func__.4321, 18
-__func__.4321:
+	.type	__func__.4325, %object
+	.size	__func__.4325, 18
+__func__.4325:
 	.string	"SupperBlkListInit"
 	.zero	6
-	.type	__func__.16103, %object
-	.size	__func__.16103, 15
-__func__.16103:
+	.type	__func__.16152, %object
+	.size	__func__.16152, 15
+__func__.16152:
 	.string	"FlashReadPages"
 	.zero	1
-	.type	__func__.4085, %object
-	.size	__func__.4085, 14
-__func__.4085:
+	.type	__func__.4089, %object
+	.size	__func__.4089, 14
+__func__.4089:
 	.string	"FtlScanSysBlk"
 	.zero	2
-	.type	__func__.3683, %object
-	.size	__func__.3683, 11
-__func__.3683:
+	.type	__func__.3687, %object
+	.size	__func__.3687, 11
+__func__.3687:
 	.string	"FtlLoadBbt"
 	.zero	5
-	.type	__func__.16122, %object
-	.size	__func__.16122, 15
-__func__.16122:
+	.type	__func__.16171, %object
+	.size	__func__.16171, 15
+__func__.16171:
 	.string	"FlashProgPages"
 	.zero	1
-	.type	__func__.4447, %object
-	.size	__func__.4447, 25
-__func__.4447:
+	.type	__func__.4451, %object
+	.size	__func__.4451, 25
+__func__.4451:
 	.string	"allocate_data_superblock"
 	.zero	7
-	.type	__func__.4488, %object
-	.size	__func__.4488, 16
-__func__.4488:
+	.type	__func__.4492, %object
+	.size	__func__.4492, 16
+__func__.4492:
 	.string	"update_vpc_list"
-	.type	__func__.4495, %object
-	.size	__func__.4495, 20
-__func__.4495:
+	.type	__func__.4499, %object
+	.size	__func__.4499, 20
+__func__.4499:
 	.string	"decrement_vpc_count"
 	.zero	4
-	.type	__func__.3934, %object
-	.size	__func__.3934, 31
-__func__.3934:
+	.type	__func__.3938, %object
+	.size	__func__.3938, 31
+__func__.3938:
 	.string	"Ftl_write_map_blk_to_last_page"
 	.zero	1
-	.type	__func__.3948, %object
-	.size	__func__.3948, 16
-__func__.3948:
+	.type	__func__.3952, %object
+	.size	__func__.3952, 16
+__func__.3952:
 	.string	"FtlMapWritePage"
-	.type	__func__.3875, %object
-	.size	__func__.3875, 16
-__func__.3875:
+	.type	__func__.3879, %object
+	.size	__func__.3879, 16
+__func__.3879:
 	.string	"load_l2p_region"
-	.type	__func__.3919, %object
-	.size	__func__.3919, 15
-__func__.3919:
+	.type	__func__.3923, %object
+	.size	__func__.3923, 15
+__func__.3923:
 	.string	"ftl_map_blk_gc"
 	.zero	1
-	.type	__func__.3990, %object
-	.size	__func__.3990, 9
-__func__.3990:
+	.type	__func__.3994, %object
+	.size	__func__.3994, 9
+__func__.3994:
 	.string	"log2phys"
 	.zero	7
-	.type	__func__.4209, %object
-	.size	__func__.4209, 16
-__func__.4209:
+	.type	__func__.4213, %object
+	.size	__func__.4213, 16
+__func__.4213:
 	.string	"FtlReUsePrevPpa"
-	.type	__func__.4243, %object
-	.size	__func__.4243, 22
-__func__.4243:
+	.type	__func__.4247, %object
+	.size	__func__.4247, 22
+__func__.4247:
 	.string	"FtlRecoverySuperblock"
 	.zero	2
-	.type	__func__.4362, %object
-	.size	__func__.4362, 14
-__func__.4362:
+	.type	__func__.4366, %object
+	.size	__func__.4366, 14
+__func__.4366:
 	.string	"ftl_check_vpc"
 	.zero	2
-	.type	__func__.4063, %object
-	.size	__func__.4063, 15
-__func__.4063:
+	.type	__func__.4067, %object
+	.size	__func__.4067, 15
+__func__.4067:
 	.string	"FtlVpcTblFlush"
 	.zero	1
-	.type	__func__.4346, %object
-	.size	__func__.4346, 21
-__func__.4346:
+	.type	__func__.4350, %object
+	.size	__func__.4350, 21
+__func__.4350:
 	.string	"FtlVpcCheckAndModify"
 	.zero	3
-	.type	__func__.4468, %object
-	.size	__func__.4468, 29
-__func__.4468:
+	.type	__func__.4472, %object
+	.size	__func__.4472, 29
+__func__.4472:
 	.string	"allocate_new_data_superblock"
 	.zero	3
-	.type	__func__.3537, %object
-	.size	__func__.3537, 13
-__func__.3537:
+	.type	__func__.3541, %object
+	.size	__func__.3541, 13
+__func__.3541:
 	.string	"FtlProgPages"
 	.zero	3
-	.type	__func__.4565, %object
-	.size	__func__.4565, 19
-__func__.4565:
+	.type	__func__.4569, %object
+	.size	__func__.4569, 19
+__func__.4569:
 	.string	"FtlGcFreeTempBlock"
 	.zero	5
-	.type	__func__.4678, %object
-	.size	__func__.4678, 23
-__func__.4678:
+	.type	__func__.4682, %object
+	.size	__func__.4682, 23
+__func__.4682:
 	.string	"rk_ftl_garbage_collect"
 	.zero	1
-	.type	__func__.3565, %object
-	.size	__func__.3565, 9
-__func__.3565:
+	.type	__func__.3569, %object
+	.size	__func__.3569, 9
+__func__.3569:
 	.string	"FtlWrite"
 	.zero	7
-	.type	__func__.4141, %object
-	.size	__func__.4141, 15
-__func__.4141:
+	.type	__func__.4145, %object
+	.size	__func__.4145, 15
+__func__.4145:
 	.string	"FtlLoadSysInfo"
 	.zero	1
-	.type	__func__.4163, %object
-	.size	__func__.4163, 18
-__func__.4163:
+	.type	__func__.4167, %object
+	.size	__func__.4167, 18
+__func__.4167:
 	.string	"FtlMapTblRecovery"
 	.zero	6
-	.type	__func__.16261, %object
-	.size	__func__.16261, 14
-__func__.16261:
+	.type	__func__.16310, %object
+	.size	__func__.16310, 14
+__func__.16310:
 	.string	"FtlWriteToIDB"
 	.zero	2
 	.type	rk_sftl_vendor_storage_fops, %object
@@ -13406,7 +13411,7 @@ power_up_flag:
 rkflash_vender_storage_dev:
 	.word	255
 	.zero	4
-	.xword	.LC134
+	.xword	.LC135
 	.xword	rk_sftl_vendor_storage_fops
 	.zero	56
 	.bss
@@ -14048,7 +14053,7 @@ gp_last_act_superblock:
 	.zero	8
 	.section	.rodata.str1.1,"aMS",@progbits,1
 .LC0:
-	.string	"SFTL version: 5.0.50 20190215"
+	.string	"SFTL version: 5.0.51 20191028"
 .LC1:
 	.string	"\n%s\n"
 .LC2:
@@ -14308,12 +14313,14 @@ gp_last_act_superblock:
 .LC129:
 	.string	"%s scan blk_id =%x page =%x hash error hash =%x hash_r =%x\n"
 .LC130:
-	.string	"write_idblock fail! %x %x %x %x\n"
+	.string	"write_idblock %x %x\n"
 .LC131:
-	.string	"%s idb buffer alloc fail\n"
+	.string	"write_idblock fail! %x %x %x %x\n"
 .LC132:
-	.string	"%p %x %p %x\n"
+	.string	"%s idb buffer alloc fail\n"
 .LC133:
-	.string	"copy_from_user error %d %p %p\n"
+	.string	"%p %x %p %x\n"
 .LC134:
+	.string	"copy_from_user error %d %p %p\n"
+.LC135:
 	.string	"vendor_storage"

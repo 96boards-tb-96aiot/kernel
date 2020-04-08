@@ -632,7 +632,6 @@ static int probe_width(struct vpu_reg *reg)
 	int type = -1;
 
 	if (reg->type != VPU_DEC && reg->type != VPU_DEC_PP) {
-		pr_info("type is not dec or pp, return\n");
 		return -1;
 	}
 	if (reg->task->get_fmt) {
@@ -2527,6 +2526,27 @@ static void vcodec_get_reg_freq_default(struct vpu_subdev_data *data,
 		reg->freq = VPU_FREQ_400M;
 }
 
+static void vcodec_get_reg_freq_rk3368(struct vpu_subdev_data *data,
+				       struct vpu_reg *reg)
+{
+	vcodec_get_reg_freq_default(data, reg);
+
+	if ((reg->type == VPU_DEC || reg->type == VPU_DEC_PP) &&
+	    data->hw_id != HEVC_ID) {
+		if (reg_check_fmt(reg) == VPU_DEC_FMT_H264) {
+			if (reg_probe_width(reg) > 2560) {
+				/*
+				 * raise frequency for resolution larger
+				 * than 1440p avc.
+				 */
+				reg->freq = VPU_FREQ_400M;
+			}
+		} else if (reg_check_interlace(reg)) {
+			reg->freq = VPU_FREQ_400M;
+		}
+	}
+}
+
 static void vcodec_get_reg_freq_rk3288(struct vpu_subdev_data *data,
 				       struct vpu_reg *reg)
 {
@@ -2979,6 +2999,8 @@ static void vcodec_set_hw_ops(struct vpu_service_info *pservice)
 		} else if (of_machine_is_compatible("rockchip,rk3288") ||
 				of_machine_is_compatible("rockchip,rk3288w")) {
 			pservice->hw_ops->get_freq = vcodec_get_reg_freq_rk3288;
+		} else if (of_machine_is_compatible("rockchip,rk3368")) {
+			pservice->hw_ops->get_freq = vcodec_get_reg_freq_rk3368;
 		}
 	}
 }
@@ -3993,12 +4015,13 @@ static void get_hw_info(struct vpu_subdev_data *data)
 		dec->max_dec_pic_width = 4096;
 	}
 
-	/* in 3399 3228 and 3229 chips, avoid vpu timeout
+	/* in 3399 3228 3229 and 1808 chips, avoid vpu timeout
 	 * and can't recover problem
 	 */
 	if (of_machine_is_compatible("rockchip,rk3399") ||
 		of_machine_is_compatible("rockchip,rk3228") ||
-		of_machine_is_compatible("rockchip,rk3229"))
+		of_machine_is_compatible("rockchip,rk3229") ||
+		of_machine_is_compatible("rockchip,rk1808"))
 		pservice->soft_reset = true;
 	else
 		pservice->soft_reset = true;
